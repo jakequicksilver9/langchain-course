@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    steps:
+      # fetch-depth: 0 is for Sonar - it attributes issues to commits and works out
+      # which code is "new" for the quality gate. A shallow clone degrades both.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # main carries the harness but no course code, and a freshly checked-out
+      # project branch has no tests yet. Skip rather than fail, so CI is never red
+      # for the wrong reason.
+      - name: Look for tests
+        id: tests
+        run: |
+          if compgen -G "tests/test_*.py" > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No tests on this branch - skipping test and analysis steps."
+          fi
+        shell: bash
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.tests.outputs.found == 'true'
+        with:
+          enable-cache: true
+
+      # --locked fails rather than silently re-resolving, which is the whole point
+      # of uv.lock being committed: the course videos were recorded against those
+      # exact versions. See the LangChain 1.x note in HARNESS.md.
+      - name: Install from uv.lock
+        if: steps.tests.outputs.found == 'true'
+        run: uv sync --locked
+
+      - name: Test with coverage
+        if: steps.tests.outputs.found == 'true'
+        run: uv run pytest
+
+      # Sonar analysis needs a token that only exists once the project is imported
+      # at sonarcloud.io. The `secrets` context is not allowed in a job-level `if`,
+      # so the check happens here instead.
+      - name: Check for SONAR_TOKEN
+        id: sonar
+        if: steps.tests.outputs.found == 'true'
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SONAR_TOKEN is not set - skipping Sonar analysis."
+          fi
+        shell: bash
+
+      - name: SonarQube scan
+        if: steps.sonar.outputs.ready == 'true'
+        uses: SonarSource/sonarqube-scan-action@v8
+
+      - name: Upload coverage
+        if: always() && steps.tests.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore

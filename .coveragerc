@@ -1,0 +1,23 @@
+# Coverage config, kept separate from pyproject.toml so the harness stays
+# additive-only and cherry-picks onto any project branch cleanly.
+
+[run]
+# Course projects are flat scripts at the repo root (main.py, ingestion.py), not
+# an installed package, so measure the working directory rather than a package name.
+source = .
+branch = True
+omit =
+    tests/*
+    .venv/*
+    */__pycache__/*
+
+[report]
+show_missing = True
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    # Course scripts are all `main.py` with a __main__ block that fires live API
+    # calls. Excluding it is the difference between a reachable 90% and a gate
+    # that can only be met by testing the instructor's glue code.
+    if __name__ == .__main__.:
